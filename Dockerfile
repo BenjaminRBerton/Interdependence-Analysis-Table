@@ -10,6 +10,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY python_dash_generic.py ./
 COPY IA_V7.csv ./
 COPY TA_IA.csv ./
+COPY hat_exoplanet_analysis.csv ./
 COPY V8 ./V8
 COPY assets ./assets
 

@@ -314,6 +314,307 @@ details > summary {
 }
 
 
+/* ═══════════════════════════════════════════════════════════════════════════
+   CURRENT TEAM CONFIGURATION
+   ══════════════════════════════════════════════════════════════════════════ */
+.configuration-section {
+    padding: 2.25rem 3vw 2.75rem;
+    background: #fff;
+    border-top: 2px solid var(--ink);
+    border-bottom: 2px solid var(--ink);
+}
+
+.configuration-panel {
+    background: var(--surface);
+    border: 2px solid var(--ink);
+    box-shadow: 8px 8px 0 #fff;
+    scroll-margin-top: 70px;
+}
+
+.configuration-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+    padding: 1.25rem 1.5rem;
+    background: var(--ink);
+    color: var(--bg);
+    border-bottom: 4px solid var(--accent);
+}
+
+.configuration-eyebrow {
+    margin-bottom: 0.2rem;
+    color: #d5d1ca;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+}
+
+.configuration-title {
+    margin: 0;
+    color: #fff;
+    font-size: clamp(1.35rem, 2vw, 1.8rem);
+}
+
+button.configuration-change-button {
+    flex: 0 0 auto;
+    background: transparent !important;
+    border-color: #fff !important;
+    color: #fff !important;
+}
+
+button.configuration-change-button:hover {
+    background: #fff !important;
+    color: var(--ink) !important;
+}
+
+.configuration-body {
+    padding: 1.5rem;
+}
+
+.config-overview {
+    display: grid;
+    gap: 1.25rem;
+}
+
+.config-metrics {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    border: 1px solid var(--border);
+    background: var(--bg);
+}
+
+.config-metric {
+    display: flex;
+    align-items: baseline;
+    gap: 0.65rem;
+    padding: 0.8rem 1rem;
+    border-right: 1px solid var(--border);
+}
+
+.config-metric:last-child { border-right: 0; }
+
+.config-metric-value {
+    font-family: var(--font-display);
+    font-size: 1.55rem;
+    font-weight: 700;
+    line-height: 1;
+    color: var(--accent);
+}
+
+.config-metric-label {
+    color: var(--ink-muted);
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+}
+
+.config-overview-grid {
+    display: grid;
+    grid-template-columns: minmax(0, 1.35fr) minmax(260px, 1fr);
+    gap: 1rem;
+}
+
+.config-block,
+.config-alternatives-section {
+    padding: 1rem;
+    background: #fff;
+    border: 1px solid var(--border);
+}
+
+.config-block-title {
+    margin: 0 0 0.85rem;
+    padding-bottom: 0.45rem;
+    border-bottom: 2px solid var(--ink);
+    font-size: 12px;
+    letter-spacing: 0.09em;
+    text-transform: uppercase;
+}
+
+.config-hierarchy-flow {
+    display: flex;
+    align-items: stretch;
+    gap: 0.55rem;
+    overflow-x: auto;
+    padding: 0.1rem 0 0.75rem;
+}
+
+.config-level {
+    display: flex;
+    flex: 1 0 120px;
+    flex-direction: column;
+    min-width: 0;
+    padding: 0.7rem 0.8rem;
+    background: var(--surface-alt);
+    border: 1px solid var(--border);
+    border-left: 4px solid var(--accent);
+}
+
+.config-level-number {
+    color: var(--ink-muted);
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+}
+
+.config-level-name {
+    margin-top: 0.15rem;
+    font-weight: 700;
+    overflow-wrap: anywhere;
+}
+
+.config-level-arrow {
+    align-self: center;
+    color: var(--accent);
+    font-size: 1.25rem;
+    font-weight: 700;
+}
+
+.config-category-row {
+    display: flex;
+    align-items: center;
+    gap: 0.7rem;
+    padding-top: 0.75rem;
+    border-top: 1px solid var(--border-light);
+}
+
+.config-inline-label,
+.config-role-label {
+    color: var(--ink-muted);
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+}
+
+.config-category-value {
+    padding: 0.15rem 0.5rem;
+    background: var(--ink);
+    color: #fff;
+    font-size: 12px;
+    font-weight: 600;
+}
+
+.config-agent-list,
+.config-role-list,
+.config-column-list {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.45rem;
+}
+
+.config-agent {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.55rem;
+    padding: 0.45rem 0.6rem;
+    border: 1px solid var(--border);
+    border-left-width: 4px;
+}
+
+.config-agent-human { border-left-color: var(--accent); }
+.config-agent-autonomous { border-left-color: var(--green); }
+.config-agent-name { font-weight: 700; }
+
+.config-agent-type {
+    color: var(--ink-muted);
+    font-family: var(--font-mono);
+    font-size: 10px;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+}
+
+.config-alternatives-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(270px, 1fr));
+    gap: 0.75rem;
+}
+
+.config-alternative-card {
+    border: 1px solid var(--border);
+    background: var(--surface-alt);
+}
+
+.config-alternative-title {
+    padding: 0.55rem 0.75rem;
+    background: #3a3a3a;
+    color: #fff;
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+}
+
+.config-role-row {
+    display: grid;
+    grid-template-columns: 78px 1fr;
+    align-items: start;
+    gap: 0.6rem;
+    padding: 0.65rem 0.75rem;
+    border-top: 1px solid var(--border-light);
+}
+
+.config-role {
+    padding: 0.15rem 0.45rem;
+    border: 1px solid currentColor;
+    font-family: var(--font-mono);
+    font-size: 11px;
+    font-weight: 600;
+}
+
+.config-role-performer { color: var(--accent); }
+.config-role-supporter { color: #27643e; }
+.config-empty-value { color: var(--ink-muted); font-style: italic; }
+
+.config-columns-details {
+    padding-top: 0;
+    border: 1px solid var(--border);
+    background: #fff;
+}
+
+.config-columns-details > summary {
+    padding: 0.75rem 1rem;
+    border: 0;
+    background: var(--surface-alt);
+    font-size: 11px;
+}
+
+.config-columns-details[open] > summary {
+    border-bottom: 1px solid var(--border);
+}
+
+.config-columns-content {
+    padding: 1rem;
+}
+
+.config-column-group-title {
+    margin-bottom: 0.45rem;
+    color: var(--ink-muted);
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+}
+
+.config-hidden-columns { margin-top: 0.9rem; }
+
+.config-column-chip {
+    padding: 0.18rem 0.45rem;
+    background: var(--ink);
+    color: #fff;
+    font-family: var(--font-mono);
+    font-size: 10px;
+}
+
+.config-column-chip-muted {
+    background: #e3dfd8;
+    color: var(--ink-muted);
+}
+
+
 /* ═══════════════════════════════════════════════════════════════════════════════
    AUTOMATION PROPORTION BOX
    ═══════════════════════════════════════════════════════════════════════════════ */
@@ -418,4 +719,12 @@ details > summary {
         font-size: 12px !important;
     }
     .section { padding: 2rem 1rem; }
+    .configuration-section { padding: 1.5rem 1rem 2rem; }
+    .configuration-header { align-items: flex-start; flex-direction: column; }
+    .configuration-body { padding: 1rem; }
+    .config-metrics { grid-template-columns: 1fr; }
+    .config-metric { border-right: 0; border-bottom: 1px solid var(--border); }
+    .config-metric:last-child { border-bottom: 0; }
+    .config-overview-grid { grid-template-columns: 1fr; }
+    .config-role-row { grid-template-columns: 1fr; }
 }

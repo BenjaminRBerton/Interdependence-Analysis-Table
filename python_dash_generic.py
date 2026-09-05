@@ -16,10 +16,13 @@ import textwrap
 import time
 import pathlib
 
-# Path to the bundled example CSV (works locally and in deployment)
+# Paths to the bundled example CSVs (work locally and in deployment)
 _HERE = pathlib.Path(__file__).parent
-_EXAMPLE_CANDIDATES = [_HERE / "V8" / "IA_V8.csv", _HERE / "IA_V8.csv"]
-EXAMPLE_CSV = next((p for p in _EXAMPLE_CANDIDATES if p.exists()), None)
+_FLIGHT_DECK_EXAMPLE_CANDIDATES = [_HERE / "V8" / "IA_V8.csv", _HERE / "IA_V8.csv"]
+FLIGHT_DECK_EXAMPLE_CSV = next(
+    (p for p in _FLIGHT_DECK_EXAMPLE_CANDIDATES if p.exists()), None
+)
+EXOPLANET_EXAMPLE_CSV = _HERE / "hat_exoplanet_analysis.csv"
 
 app = dash.Dash(__name__, suppress_callback_exceptions=True, external_stylesheets=["assets/styles.css"])
 server = app.server
@@ -198,14 +201,19 @@ def detect_team_config(df):
             hier_slice = [c for c in [procedure_column, task_column] if c]
     except (ValueError, TypeError):
         hier_slice = [c for c in structural_candidates if c not in category_like]
-    hierarchy_columns = [c for c in hier_slice if c not in category_like][:4]
+    hierarchy_columns = [c for c in hier_slice if c not in category_like]
 
     # Ensure procedure and task are always represented in the hierarchy
     if procedure_column and procedure_column not in hierarchy_columns and procedure_column in structural_set_all:
         hierarchy_columns.insert(0, procedure_column)
     if task_column and task_column not in hierarchy_columns and task_column in structural_set_all:
         hierarchy_columns.append(task_column)
-    hierarchy_columns = hierarchy_columns[:4]
+    # The IA table intentionally supports at most three decomposition levels.
+    # If auto-detection finds more, retain the broadest level and the two most
+    # specific levels so the terminal activity/capacity is never discarded.
+    hierarchy_columns = list(dict.fromkeys(hierarchy_columns))
+    if len(hierarchy_columns) > 3:
+        hierarchy_columns = [hierarchy_columns[0], *hierarchy_columns[-2:]]
 
     # Update back-compat aliases to reflect final hierarchy
     procedure_column = hierarchy_columns[0] if hierarchy_columns else None
@@ -252,7 +260,13 @@ def detect_team_config(df):
     return config
 
 
-def build_config_from_manual(column_str, task_col="Task", procedure_col="Procedure", category_col=None):
+def build_config_from_manual(
+    column_str,
+    task_col="Task",
+    procedure_col="Procedure",
+    category_col=None,
+    capacity_col=None,
+):
     """
     Build team config from a manual column specification string.
 
@@ -302,13 +316,27 @@ def build_config_from_manual(column_str, task_col="Task", procedure_col="Procedu
         atype = "human" if name.lower() in ["human", "pilot", "operator", "crew"] else "autonomous"
         agents.append({"name": name, "type": atype})
 
+    # Manual setup can define one, two, or three named decomposition levels.
+    # Empty and duplicate names are removed while preserving broad-to-specific
+    # order. ``task_column`` remains the back-compat alias for the last level.
+    raw_hier_cols = [procedure_col, task_col, capacity_col]
+    hier_cols = []
+    for col in raw_hier_cols:
+        name = str(col or "").strip()
+        if name and name not in hier_cols:
+            hier_cols.append(name)
+    hier_cols = hier_cols[:3]
+    if not hier_cols:
+        hier_cols = ["Task"]
+
+    procedure_col = hier_cols[0]
+    task_col = hier_cols[-1]
+
     extra_cols = ["Observability", "Predictability", "Directability"]
-    struct_cols = ["Row", procedure_col, task_col]
+    struct_cols = ["Row", *hier_cols]
     if category_col and category_col not in struct_cols:
-        struct_cols.insert(3, category_col)  # insert after task_col
+        struct_cols.append(category_col)
     all_columns = struct_cols + cols + extra_cols
-    # For manual setup, hierarchy = [procedure, task] (2-level)
-    hier_cols = [c for c in [procedure_col, task_col] if c]
 
     config = {
         "agents": agents,
@@ -542,9 +570,9 @@ def style_table(df, config):
 
 
 def style_hierarchy_merge(df, config):
-    """Visual pseudo-merge for all hierarchy columns (up to 4 levels).
+    """Visual pseudo-merge for all hierarchy columns (up to 3 levels).
 
-    For each hierarchy level (except the last/task level):
+    For each hierarchy level:
     - Continuation rows where the value at this level (and all outer levels)
       is unchanged have their text made transparent, mimicking a merged cell.
     - The first row of a new group gets a top separator line whose thickness
@@ -558,7 +586,7 @@ def style_hierarchy_merge(df, config):
         hierarchy_cols = [c for c in [proc_col, task_col] if c in df.columns]
 
     hierarchy_cols = [c for c in hierarchy_cols if c in df.columns]
-    if len(hierarchy_cols) <= 1 or df.empty:
+    if not hierarchy_cols or df.empty:
         return []
 
     all_cols = config.get("all_columns", [])
@@ -583,15 +611,16 @@ def style_hierarchy_merge(df, config):
                 change_level = lvl
                 break
 
-        # Hide repeated text for display levels (all except the terminal/task level)
-        for lvl in range(len(hierarchy_cols) - 1):
+        # Hide repeated text at every level, including the terminal level. A
+        # repeated value is only merged when its complete parent path matches.
+        for lvl in range(len(hierarchy_cols)):
             col = hierarchy_cols[lvl]
             # Hide when: this level has not changed AND no outer level has changed
             if change_level is None or change_level > lvl:
                 styles.append({
                     "if": {"row_index": i, "column_id": col},
                     "color": "transparent",
-                    "borderTop": "1px solid #e8e8e8",
+                    "borderTop": f"1px solid {BG}",
                 })
             # If change_level <= lvl, an outer level changed → show this level's value
 
@@ -716,44 +745,107 @@ def config_summary_html(config):
     if not config:
         return html.P("No configuration loaded.")
 
-    agents_str = ", ".join(
-        [f"{a['name']} ({a['type']})" for a in config["agents"]]
-    )
-    alt_items = []
-    for alt in config["alternatives"]:
-        perfs = ", ".join(alt["performers"])
-        sups = ", ".join(alt["supporters"]) if alt["supporters"] else "None"
-        alt_items.append(
-            html.Li(f"{alt['name']}: Performers [{perfs}] — Supporters [{sups}]")
-        )
-
-    # Build column list with visible ones bolded
-    agent_set = set(get_agent_columns(config))
-    visible = DEFAULT_VISIBLE_COLUMNS | agent_set
-    all_cols = config.get("all_columns", [])
-    col_spans = []
-    for i, col in enumerate(all_cols):
-        label = html.B(col) if col in visible else html.Span(col, style={"color": "var(--ink-muted)"})
-        col_spans.append(label)
-        if i < len(all_cols) - 1:
-            col_spans.append(", ")
-
+    agents = config.get("agents", [])
+    alternatives = config.get("alternatives", [])
     hier_cols = config.get("hierarchy_columns", [
         config.get("procedure_column", "Procedure"), config.get("task_column", "Task")
     ])
-    level_names = ["Level 1 (broadest)", "Level 2", "Level 3", "Level 4 (task)"]
-    hier_labels = [
-        html.Li(f"{level_names[idx] if idx < len(level_names) else f'Level {idx+1}'}: {col}")
-        for idx, col in enumerate(hier_cols)
-    ]
+    hier_cols = [col for col in hier_cols if col]
 
-    return html.Div([
-        html.P([html.B("Agents: "), agents_str]),
-        html.P(html.B("Hierarchy levels:")),
-        html.Ul(hier_labels, style={"marginTop": "2px", "marginBottom": "8px"}),
-        html.P([html.B("Category column: "), config.get("category_column") or "—  (none detected)"]),
-        html.P([html.B("Columns: ")] + col_spans),
-        html.Ul(alt_items),
+    agent_badges = []
+    for agent in agents:
+        agent_type = str(agent.get("type", "autonomous")).lower()
+        badge_class = "config-agent config-agent-human" if agent_type == "human" else "config-agent config-agent-autonomous"
+        agent_badges.append(html.Div([
+            html.Span(agent.get("name", "Unnamed"), className="config-agent-name"),
+            html.Span(agent_type.title(), className="config-agent-type"),
+        ], className=badge_class))
+
+    alternative_cards = []
+    for alt in alternatives:
+        performer_badges = [
+            html.Span(role, className="config-role config-role-performer")
+            for role in alt.get("performers", [])
+        ] or [html.Span("None", className="config-empty-value")]
+        supporter_badges = [
+            html.Span(role, className="config-role config-role-supporter")
+            for role in alt.get("supporters", [])
+        ] or [html.Span("None", className="config-empty-value")]
+        alternative_cards.append(html.Div([
+            html.Div(alt.get("name", "Team Alternative"), className="config-alternative-title"),
+            html.Div([
+                html.Span("Performer", className="config-role-label"),
+                html.Div(performer_badges, className="config-role-list"),
+            ], className="config-role-row"),
+            html.Div([
+                html.Span("Supporter", className="config-role-label"),
+                html.Div(supporter_badges, className="config-role-list"),
+            ], className="config-role-row"),
+        ], className="config-alternative-card"))
+
+    hierarchy_flow = []
+    for idx, col in enumerate(hier_cols):
+        hierarchy_flow.append(html.Div([
+            html.Span(f"Level {idx + 1}", className="config-level-number"),
+            html.Span(col, className="config-level-name"),
+        ], className="config-level"))
+        if idx < len(hier_cols) - 1:
+            hierarchy_flow.append(html.Span("→", className="config-level-arrow", **{"aria-hidden": "true"}))
+
+    # Separate immediately visible columns from optional metadata so the
+    # summary stays readable even for wide IA datasets.
+    agent_set = set(get_agent_columns(config))
+    hierarchy_set = set(hier_cols)
+    visible = DEFAULT_VISIBLE_COLUMNS | agent_set | hierarchy_set
+    all_cols = config.get("all_columns", [])
+    visible_cols = [col for col in all_cols if col in visible]
+    hidden_cols = [col for col in all_cols if col not in visible]
+
+    return html.Div(className="config-overview", children=[
+        html.Div(className="config-metrics", children=[
+            html.Div([html.Span(str(len(agents)), className="config-metric-value"),
+                      html.Span("Team members", className="config-metric-label")], className="config-metric"),
+            html.Div([html.Span(str(len(alternatives)), className="config-metric-value"),
+                      html.Span("Alternatives", className="config-metric-label")], className="config-metric"),
+            html.Div([html.Span(str(len(hier_cols)), className="config-metric-value"),
+                      html.Span("Hierarchy levels", className="config-metric-label")], className="config-metric"),
+        ]),
+        html.Div(className="config-overview-grid", children=[
+            html.Section(className="config-block", children=[
+                html.H5("Activity hierarchy", className="config-block-title"),
+                html.Div(hierarchy_flow, className="config-hierarchy-flow"),
+                html.Div([
+                    html.Span("Category", className="config-inline-label"),
+                    html.Span(config.get("category_column") or "None", className="config-category-value"),
+                ], className="config-category-row"),
+            ]),
+            html.Section(className="config-block", children=[
+                html.H5("Team members", className="config-block-title"),
+                html.Div(agent_badges, className="config-agent-list"),
+            ]),
+        ]),
+        html.Section(className="config-alternatives-section", children=[
+            html.H5("Team alternatives", className="config-block-title"),
+            html.Div(alternative_cards, className="config-alternatives-grid"),
+        ]),
+        html.Details(className="config-columns-details", children=[
+            html.Summary(f"Dataset columns ({len(all_cols)})"),
+            html.Div([
+                html.Div([
+                    html.Div("Shown in table", className="config-column-group-title"),
+                    html.Div([html.Span(col, className="config-column-chip") for col in visible_cols],
+                             className="config-column-list"),
+                ]),
+                html.Div([
+                    html.Div("Initially hidden metadata", className="config-column-group-title"),
+                    html.Div(
+                        [html.Span(col, className="config-column-chip config-column-chip-muted") for col in hidden_cols]
+                        if hidden_cols else [html.Span("None", className="config-empty-value")],
+                        className="config-column-list",
+                    ),
+                ], className="config-hidden-columns"),
+            ], className="config-columns-content"),
+        ]),
     ])
 
 
@@ -1566,7 +1658,7 @@ app.layout = html.Div([
     # STICKY NAVIGATION HEADER
     # ═══════════════════════════════════════════════════════════════════════
     html.Nav(className="sticky-nav", children=[
-        html.A("Interdependence Analysis Dashboard", href="#", className="nav-brand"),
+        html.A("Interdependence Analysis", href="#", className="nav-brand"),
         html.Div(id="nav-links", className="nav-links", style=HIDE, children=[
             html.A("Table",      href="#table-anchor",      className="nav-link"),
             html.A("Workflow",   href="#workflow-anchor",   className="nav-link"),
@@ -1578,7 +1670,7 @@ app.layout = html.Div([
     # SETUP SECTION  [01]
     # ═══════════════════════════════════════════════════════════════════════
     html.Div(id="setup-section", className="section", children=[
-        html.Div("[ 01 ]", className="section-number"),
+        html.Div("", className="section-number"),
         html.H2("Team Setup", className="section-title"),
         html.P(
             "Upload a CSV or manually define your Human-Autonomy Team configuration.",
@@ -1596,10 +1688,11 @@ app.layout = html.Div([
             ),
             html.P([
                 html.B("Expected column structure: "),
-                "Row | Procedure | Task | [optional: Category] | Agent columns… | Metadata columns",
+                "Row | Level 1 | [Level 2] | [Level 3] | [optional: Category] | Agent columns… | Metadata columns",
             ], style={"fontSize": "13px", "fontFamily": "var(--font-mono)"}),
             html.P([
-                "The Procedure column groups Tasks hierarchically (Procedure → Task). "
+                "The activity decomposition supports up to three ordered levels "
+                "(for example, Procedure → Task → Capacity). "
                 "The optional Category column (e.g. Observe/Orient/Decide/Act from a OODA decomposition) "
                 "is used for Automation Proportion computation. Any column with few unique string values "
                 "not matching colors will be auto-detected as the Category column.",
@@ -1618,17 +1711,31 @@ app.layout = html.Div([
                 multiple=False,
             ),
             html.Div([
-                html.Button(
-                    "Load Example (IA_V8.csv)",
-                    id="load-example-button",
-                    n_clicks=0,
-                    style={"marginTop": "8px", "fontSize": "13px"},
-                ),
-                html.Span(
-                    " — load a pre-built example to explore the dashboard",
-                    style={"fontSize": "12px", "color": INK_MUTED, "marginLeft": "8px"},
-                ),
-            ]),
+                html.Div([
+                    html.Button(
+                        "Load Flight Deck Example",
+                        id="load-example-button",
+                        n_clicks=0,
+                        style={"fontSize": "13px"},
+                    ),
+                    html.P(
+                        "An IA for flight-deck autonomy involving a single pilot and an autonomous teammate.",
+                        style={"fontSize": "12px", "color": INK_MUTED, "margin": "6px 0 0"},
+                    ),
+                ], style={"flex": "1", "minWidth": "260px"}),
+                html.Div([
+                    html.Button(
+                        "Load Exoplanet Explorer Example",
+                        id="load-exoplanet-example-button",
+                        n_clicks=0,
+                        style={"fontSize": "13px"},
+                    ),
+                    html.P(
+                        "An exoplanet exploration game with one player supervising rovers and drones.",
+                        style={"fontSize": "12px", "color": INK_MUTED, "margin": "6px 0 0"},
+                    ),
+                ], style={"flex": "1", "minWidth": "260px"}),
+            ], style={"display": "flex", "flexWrap": "wrap", "gap": "16px", "marginTop": "12px"}),
             html.Div(id="upload-status", style={"marginTop": "10px", "fontStyle": "italic"}),
 
             # ── Hierarchy configuration panel (shown after CSV upload) ──
@@ -1637,8 +1744,8 @@ app.layout = html.Div([
                         style={"marginTop": "18px", "textTransform": "uppercase",
                                "letterSpacing": "0.04em", "fontSize": "13px", "color": INK_MUTED}),
                 html.P(
-                    "Select 1–4 columns that form the hierarchical decomposition of tasks, "
-                    "from the broadest grouping (Level 1) down to the task level (last active level). "
+                    "Select 1–3 columns that form the hierarchical decomposition of activities, "
+                    "from the broadest grouping (Level 1) down to the most specific active level. "
                     "Auto-detected values are pre-filled — adjust if needed.",
                     style={"fontSize": "13px"},
                 ),
@@ -1658,17 +1765,10 @@ app.layout = html.Div([
                                      style={"fontSize": "13px"}),
                     ], style={"flex": "1", "marginRight": "8px"}),
                     html.Div([
-                        html.Label("Level 3:",
+                        html.Label("Level 3 (most specific, optional):",
                                    style={"fontWeight": "bold", "fontSize": "12px", "display": "block"}),
                         dcc.Dropdown(id="hier-level-3", options=[], value=None, clearable=True,
-                                     placeholder="e.g. Subgoal",
-                                     style={"fontSize": "13px"}),
-                    ], style={"flex": "1", "marginRight": "8px"}),
-                    html.Div([
-                        html.Label("Level 4 (task level):",
-                                   style={"fontWeight": "bold", "fontSize": "12px", "display": "block"}),
-                        dcc.Dropdown(id="hier-level-4", options=[], value=None, clearable=True,
-                                     placeholder="e.g. Required capacity",
+                                     placeholder="e.g. Capacity",
                                      style={"fontSize": "13px"}),
                     ], style={"flex": "1"}),
                 ], style={"display": "flex", "gap": "8px", "marginBottom": "14px"}),
@@ -1700,9 +1800,9 @@ app.layout = html.Div([
                 ),
             ]),
 
-            # ── Procedure column ──
+            # ── Hierarchy level 1 ──
             html.Div([
-                html.Label("Higher-level activity column name:", style={"fontWeight": "bold", "marginRight": "10px"}),
+                html.Label("Level 1 column name:", style={"fontWeight": "bold", "marginRight": "10px"}),
                 dcc.Input(
                     id="manual-procedure-col-input",
                     value="Procedure",
@@ -1710,26 +1810,39 @@ app.layout = html.Div([
                 ),
             ], style={"display": "flex", "alignItems": "center", "marginBottom": "6px"}),
             html.P(
-                "Define the column name that groups several Tasks and represents one level of hierarchical "
-                "decomposition of the joint activity — the analysis uses a two-level hierarchy: "
-                "(e.g. Procedure → Task.) This column typically corresponds to high-level mission phases "
-                "or activity clusters.",
+                "The broadest grouping, such as a procedure, phase, or activity cluster.",
                 style={"fontSize": "13px", "marginTop": "2px", "marginBottom": "14px"},
             ),
 
-            # ── Task column ──
+            # ── Hierarchy level 2 ──
             html.Div([
-                html.Label("Lower-level activity column name:", style={"fontWeight": "bold", "marginRight": "10px"}),
+                html.Label("Level 2 column name (optional):", style={"fontWeight": "bold", "marginRight": "10px"}),
                 dcc.Input(
                     id="manual-task-col-input",
                     value="Task",
                     style={"width": "200px", "padding": "8px"},
                 ),
             ], style={"display": "flex", "alignItems": "center", "marginBottom": "6px"}),
+            html.P(
+                "A more specific grouping, such as a task or subtask. Leave blank for a one-level hierarchy.",
+                style={"fontSize": "13px", "marginTop": "2px", "marginBottom": "14px"},
+            ),
+
+            # ── Hierarchy level 3 ──
+            html.Div([
+                html.Label("Level 3 column name (optional):", style={"fontWeight": "bold", "marginRight": "10px"}),
+                dcc.Input(
+                    id="manual-capacity-col-input",
+                    value="Capacity",
+                    placeholder="e.g. Capacity, Subtask",
+                    style={"width": "220px", "padding": "8px"},
+                ),
+            ], style={"display": "flex", "alignItems": "center", "marginBottom": "6px"}),
             html.P([
-                "Represents the terminal nodes of the activity decomposition. We recommend decomposing into "
-                "required capacity in terms of information-processing stages: ",
-                html.B("Sense → Interpret → Decide → Act"),
+                "The most specific decomposition level. For a capacity-based IA, this can represent required "
+                "information-processing capacity such as ",
+                html.B("Sense, Interpret, Decide, or Act"),
+                ". Leave blank for a two-level hierarchy.",
             ], style={"fontSize": "13px", "marginTop": "2px", "marginBottom": "14px"}),
 
             # ── Category column ──
@@ -1823,14 +1936,18 @@ app.layout = html.Div([
     # CONFIG SUMMARY (shown after setup)
     # ═══════════════════════════════════════════════════════════════════════
     html.Div(id="config-summary", style=HIDE, children=[
-        html.Div(className="section", style={"paddingBottom": "1rem"}, children=[
-            html.Div("[ 01 ]", className="section-number"),
-            html.Div([
-                html.H4("Current Team Configuration", style={"display": "inline-block", "margin": "0"}),
-                html.Button("Change Team", id="reset-config-button", n_clicks=0,
-                            style={"marginLeft": "20px"}),
-            ], style={"display": "flex", "alignItems": "center"}),
-            html.Div(id="config-details", style={"marginTop": "1rem"}),
+        html.Div(className="configuration-section", children=[
+            html.Div(className="configuration-panel", children=[
+                html.Div(className="configuration-header", children=[
+                    html.Div([
+                        html.Div("Active setup", className="configuration-eyebrow"),
+                        html.H2("Current Team Configuration", className="configuration-title"),
+                    ]),
+                    html.Button("Change Team", id="reset-config-button", n_clicks=0,
+                                className="configuration-change-button"),
+                ]),
+                html.Div(id="config-details", className="configuration-body"),
+            ]),
         ]),
     ]),
 
@@ -1841,7 +1958,7 @@ app.layout = html.Div([
 
         # ── [02] Table ──
         html.Div(id="table-anchor", className="section", children=[
-            html.Div("[ 02 ]", className="section-number"),
+            html.Div("", className="section-number"),
             html.H2("Interdependence Analysis Table", className="section-title"),
 
             html.Div(id="table-wrapper"),
@@ -1878,7 +1995,7 @@ app.layout = html.Div([
 
         # ── [03] Workflow Graph ──
         html.Div(id="workflow-anchor", className="section", children=[
-            html.Div("[ 03 ]", className="section-number"),
+            html.Div("", className="section-number"),
             html.H2("Workflow Graph", className="section-title"),
 
             # Procedure dropdown + View selector
@@ -1964,7 +2081,7 @@ app.layout = html.Div([
 
         # ── [04] Statistics ──
         html.Div(id="statistics-anchor", className="section", children=[
-            html.Div("[ 04 ]", className="section-number"),
+            html.Div("", className="section-number"),
             html.H2("Statistics", className="section-title"),
             html.Div([
                 html.Div([
@@ -1995,7 +2112,7 @@ app.layout = html.Div([
 
     # Footer
     html.Footer(
-        "© Benjamin R. Berton 2025 Polytechnique Montreal",
+        "© Benjamin R. Berton 2026 Polytechnique Montreal",
         className="site-footer",
     ),
 ], style={
@@ -2016,6 +2133,7 @@ app.layout = html.Div([
     Output("manual-columns-input", "value"),
     Output("manual-task-col-input", "value"),
     Output("manual-procedure-col-input", "value"),
+    Output("manual-capacity-col-input", "value"),
     Input("preset-2agent", "n_clicks"),
     Input("preset-3agent", "n_clicks"),
     prevent_initial_call=True,
@@ -2024,10 +2142,10 @@ def apply_preset(n2, n3):
     ctx = callback_context
     btn = ctx.triggered[0]["prop_id"].split(".")[0]
     if btn == "preset-2agent":
-        return "Human*, Robot, Robot*, Human", "Task", "Procedure"
+        return "Human*, Robot, Robot*, Human", "Task", "Procedure", "Capacity"
     elif btn == "preset-3agent":
-        return "Human*, UGV, UAV, UGV*, UAV*, Human", "Task", "Procedure"
-    return dash.no_update, dash.no_update, dash.no_update
+        return "Human*, UGV, UAV, UGV*, UAV*, Human", "Task", "Procedure", "Capacity"
+    return dash.no_update, dash.no_update, dash.no_update, dash.no_update
 
 
 # ── Nav-links visibility ─────────────────────────────────────────────────────
@@ -2058,47 +2176,50 @@ def toggle_nav_links(config):
     Output("hier-level-2", "value"),
     Output("hier-level-3", "options"),
     Output("hier-level-3", "value"),
-    Output("hier-level-4", "options"),
-    Output("hier-level-4", "value"),
     Input("setup-upload", "contents"),
     Input("create-team-button", "n_clicks"),
     Input("reset-config-button", "n_clicks"),
     Input("load-example-button", "n_clicks"),
+    Input("load-exoplanet-example-button", "n_clicks"),
     Input("confirm-hierarchy-button", "n_clicks"),
     State("setup-upload", "filename"),
     State("manual-columns-input", "value"),
     State("manual-task-col-input", "value"),
     State("manual-procedure-col-input", "value"),
+    State("manual-capacity-col-input", "value"),
     State("manual-category-col-input", "value"),
     State("pending-csv-store", "data"),
     State("hier-level-1", "value"),
     State("hier-level-2", "value"),
     State("hier-level-3", "value"),
-    State("hier-level-4", "value"),
     prevent_initial_call=True,
 )
-def handle_setup(upload_contents, create_clicks, reset_clicks, example_clicks, confirm_clicks,
+def handle_setup(upload_contents, create_clicks, reset_clicks, flight_example_clicks,
+                 exoplanet_example_clicks, confirm_clicks,
                  upload_filename, manual_columns, manual_task_col,
-                 manual_procedure_col, manual_category_col,
-                 pending_csv, hier_l1, hier_l2, hier_l3, hier_l4):
+                 manual_procedure_col, manual_capacity_col, manual_category_col,
+                 pending_csv, hier_l1, hier_l2, hier_l3):
     ctx = callback_context
     triggered = ctx.triggered[0]["prop_id"].split(".")[0]
     no = dash.no_update
-    # 18 outputs: 8 core + pending-csv-store + hierarchy-section + 4*(options+value)
-    _no18 = (no,) * 18
+    # 16 outputs: 8 core + pending-csv-store + hierarchy-section + 3*(options+value)
+    _no16 = (no,) * 16
 
     def _hide_hier():
-        """Return the 10 hierarchy-panel outputs that hide/clear the panel."""
-        return None, HIDE, [], None, [], None, [], None, [], None
+        """Return the 8 hierarchy-panel outputs that hide/clear the panel."""
+        return None, HIDE, [], None, [], None, [], None
 
     if triggered == "reset-config-button":
         return (None, None, HIDE, SHOW, HIDE, None, [], "") + _hide_hier()
 
-    if triggered == "load-example-button":
-        if EXAMPLE_CSV is None:
+    if triggered in ("load-example-button", "load-exoplanet-example-button"):
+        is_exoplanet = triggered == "load-exoplanet-example-button"
+        example_path = EXOPLANET_EXAMPLE_CSV if is_exoplanet else FLIGHT_DECK_EXAMPLE_CSV
+        example_name = "Exoplanet Explorer" if is_exoplanet else "Flight Deck"
+        if example_path is None or not example_path.exists():
             return (no, no, no, no, no, no, no, "⚠️ Example file not found.") + _hide_hier()
         try:
-            df = pd.read_csv(EXAMPLE_CSV)
+            df = pd.read_csv(example_path)
         except Exception as e:
             return (no, no, no, no, no, no, no, f"⚠️ Error reading example: {e}") + _hide_hier()
         config = detect_team_config(df)
@@ -2111,7 +2232,10 @@ def handle_setup(upload_contents, create_clicks, reset_clicks, example_clicks, c
         proc_options = [{"label": p, "value": p} for p in df[proc_col].dropna().unique()] if proc_col in df.columns else []
         table = build_data_table(df, config)
         summary = config_summary_html(config)
-        return (config, table, SHOW, HIDE, SHOW, summary, proc_options, "✅ Loaded example: IA_V8.csv") + _hide_hier()
+        return (
+            config, table, SHOW, HIDE, SHOW, summary, proc_options,
+            f"✅ Loaded example: {example_name}",
+        ) + _hide_hier()
 
     if triggered == "setup-upload" and upload_contents:
         # Step 1: parse CSV, auto-detect hierarchy, show the panel for user to confirm/adjust
@@ -2135,7 +2259,6 @@ def handle_setup(upload_contents, create_clicks, reset_clicks, example_clicks, c
         v1 = hier[0] if len(hier) > 0 else None
         v2 = hier[1] if len(hier) > 1 else None
         v3 = hier[2] if len(hier) > 2 else None
-        v4 = hier[3] if len(hier) > 3 else None
 
         n_hier = len(hier)
         pending = {"content": content_string, "filename": upload_filename or "file.csv"}
@@ -2146,25 +2269,25 @@ def handle_setup(upload_contents, create_clicks, reset_clicks, example_clicks, c
         return (
             no, no, no, no, no, no, no, status,
             pending, SHOW,
-            options, v1, options, v2, options, v3, options, v4,
+            options, v1, options, v2, options, v3,
         )
 
     if triggered == "confirm-hierarchy-button":
         # Step 2: decode pending CSV, override hierarchy, build table
         if not pending_csv:
-            return _no18
+            return _no16
         try:
             decoded = base64.b64decode(pending_csv["content"])
             df = pd.read_csv(io.StringIO(decoded.decode("utf-8")))
         except Exception as e:
-            return (no, no, no, no, no, no, no, f"⚠️ Error reading pending file: {e}") + (no,) * 10
+            return (no, no, no, no, no, no, no, f"⚠️ Error reading pending file: {e}") + (no,) * 8
 
         config = detect_team_config(df)
         if config is None:
-            return (no, no, no, no, no, no, no, "⚠️ Could not detect team structure.") + (no,) * 10
+            return (no, no, no, no, no, no, no, "⚠️ Could not detect team structure.") + (no,) * 8
 
         # Override hierarchy with user-selected levels
-        selected_hier = [l for l in [hier_l1, hier_l2, hier_l3, hier_l4] if l]
+        selected_hier = list(dict.fromkeys(l for l in [hier_l1, hier_l2, hier_l3] if l))
         if selected_hier:
             config["hierarchy_columns"] = selected_hier
             config["procedure_column"] = selected_hier[0]
@@ -2195,18 +2318,19 @@ def handle_setup(upload_contents, create_clicks, reset_clicks, example_clicks, c
     if triggered == "create-team-button":
         config = build_config_from_manual(
             manual_columns or "",
-            task_col=manual_task_col or "Task",
+            task_col=manual_task_col,
             procedure_col=manual_procedure_col or "Procedure",
             category_col=manual_category_col.strip() or None if manual_category_col else None,
+            capacity_col=manual_capacity_col,
         )
         if config is None:
-            return _no18
+            return _no16
         df = create_empty_df(config)
         table = build_data_table(df, config)
         summary = config_summary_html(config)
         return (config, table, SHOW, HIDE, SHOW, summary, [], "") + _hide_hier()
 
-    return _no18
+    return _no16
 
 
 
