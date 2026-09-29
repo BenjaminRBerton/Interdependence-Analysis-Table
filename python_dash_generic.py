@@ -30,8 +30,8 @@ server = app.server
 # ─── Design Palette ────────────────────────────────────────────────────────────
 # Edit these to re-skin all graphs / inline styles in one place.
 BG           = "#ffffff"
-SURFACE      = "#f7f7f5"
-SURFACE      = "#f7f7f5"
+SURFACE      = "#ffffff"
+SURFACE      = "#ffffff"
 INK          = "#1a1a1a"
 INK_MUTED    = "#313131"
 BORDER       = "#b0ada6"
@@ -67,6 +67,12 @@ COLOR_SHADES = {
 # ─── Constants ─────────────────────────────────────────────────────────────────
 COLOR_OPTIONS = ["red", "yellow", "green", "orange"]
 VALID_COLORS = {"red", "yellow", "green", "orange"}
+
+# Table edits are cheap and immediate, but rebuilding the merged hierarchy styles
+# and workflow graph is not. Poll frequently enough for a responsive UI, then
+# publish one normalized table snapshot after the user has stopped editing.
+WORKFLOW_REFRESH_POLL_MS = 500
+WORKFLOW_REFRESH_QUIET_MS = 2000
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -1653,6 +1659,13 @@ app.layout = html.Div([
     dcc.Store(id="base-figure-store", data=None),
     dcc.Store(id="arrow-indices-store", data=None),
     dcc.Store(id="pending-csv-store", data=None),
+    dcc.Store(id="workflow-data-store", data=None),
+    dcc.Store(id="workflow-refresh-state", data=None),
+    dcc.Interval(
+        id="workflow-refresh-interval",
+        interval=WORKFLOW_REFRESH_POLL_MS,
+        n_intervals=0,
+    ),
 
     # ═══════════════════════════════════════════════════════════════════════
     # STICKY NAVIGATION HEADER
@@ -2421,15 +2434,97 @@ def handle_table(data, save_clicks, upload_contents, add_clicks, copy_clicks,
     # ── Table edited ──
     if triggered == "responsibility-table" and data and config:
         df = pd.DataFrame(data)
-        df = ensure_row_column(df)
         proc_col = config.get("procedure_column", "Procedure")
         proc_options = []
         if proc_col in df.columns:
             proc_options = [{"label": p, "value": p} for p in df[proc_col].dropna().unique()]
-        table = build_data_table(df, config)
-        return table, "", None, proc_options, no, no, no, no, no
+        # Do not reconstruct the DataTable for every keystroke/deletion. The
+        # periodic workflow snapshot callback below refreshes row numbering and
+        # hierarchy merge styling once the edit burst has settled.
+        return no, "", None, proc_options, no, no, no, no, no
 
     return no, "", None, no, no, no, no, no, no
+
+
+# ── Batched table/workflow refresh ────────────────────────────────────────────────
+app.clientside_callback(
+    """
+    function(data, config, pending) {
+        if (data === undefined || data === null) {
+            return window.dash_clientside.no_update;
+        }
+
+        // Normalize row labels before comparing snapshots. This prevents the
+        // eventual table refresh from looking like a second user edit.
+        var normalized = data.map(function(row, index) {
+            return Object.assign({}, row, {Row: index + 1});
+        });
+        // Include configuration because changing the selected hierarchy can
+        // require a rebuild even when the underlying table rows are identical.
+        var serialized = JSON.stringify({data: normalized, config: config || null});
+        // Compact dual 32-bit hash: the stores do not need a second full copy
+        // of a potentially large table just to detect unchanged content.
+        var hash1 = 2166136261;
+        var hash2 = 2246822507;
+        for (var i = 0; i < serialized.length; i++) {
+            var code = serialized.charCodeAt(i);
+            hash1 = Math.imul(hash1 ^ code, 16777619);
+            hash2 = Math.imul(hash2 ^ code, 3266489909);
+        }
+        var signature = normalized.length + ":" + serialized.length + ":" +
+            (hash1 >>> 0).toString(16) + ":" + (hash2 >>> 0).toString(16);
+        if (pending && pending.signature === signature) {
+            return window.dash_clientside.no_update;
+        }
+        return {
+            data: normalized,
+            signature: signature,
+            changed_at: Date.now()
+        };
+    }
+    """,
+    Output("workflow-refresh-state", "data"),
+    Input("responsibility-table", "data"),
+    Input("team-config-store", "data"),
+    State("workflow-refresh-state", "data"),
+)
+
+
+app.clientside_callback(
+    f"""
+    function(n_intervals, pending, published) {{
+        if (!pending || Date.now() - pending.changed_at < {WORKFLOW_REFRESH_QUIET_MS}) {{
+            return window.dash_clientside.no_update;
+        }}
+        if (published && published.signature === pending.signature) {{
+            return window.dash_clientside.no_update;
+        }}
+        return {{
+            data: pending.data,
+            signature: pending.signature,
+            revision: published ? published.revision + 1 : 1
+        }};
+    }}
+    """,
+    Output("workflow-data-store", "data"),
+    Input("workflow-refresh-interval", "n_intervals"),
+    State("workflow-refresh-state", "data"),
+    State("workflow-data-store", "data"),
+)
+
+
+@app.callback(
+    Output("table-wrapper", "children", allow_duplicate=True),
+    Input("workflow-data-store", "data"),
+    State("team-config-store", "data"),
+    prevent_initial_call=True,
+)
+def refresh_table_merge_styles(workflow_snapshot, config):
+    """Reapply row numbers and hierarchy pseudo-merging after edits settle."""
+    data = (workflow_snapshot or {}).get("data")
+    if data is None or not config:
+        return dash.no_update
+    return build_data_table(pd.DataFrame(data), config)
 
 
 # ── Graph callbacks (two-stage: base figure + highlighting) ───────────────────
@@ -2439,12 +2534,14 @@ def handle_table(data, save_clicks, upload_contents, add_clicks, copy_clicks,
     Output("alt-labels", "children"),
     Input("procedure-dropdown", "value"),
     Input("view-selector", "value"),
-    Input("responsibility-table", "data"),
+    Input("workflow-data-store", "data"),
     State("team-config-store", "data"),
+    running=[(Output("workflow-refresh-interval", "disabled"), True, False)],
 )
-def build_base_figure(procedure, view_mode, data, config):
+def build_base_figure(procedure, view_mode, workflow_snapshot, config):
     """Build the base figure structure (without highlighting).
-    Only runs when procedure, view mode, or data changes."""
+    Table changes reach this callback only after the quiet-period batch closes."""
+    data = (workflow_snapshot or {}).get("data")
     if not data or not config:
         return None, None, None
 
@@ -2482,12 +2579,13 @@ def build_base_figure(procedure, view_mode, data, config):
     Input("highlight-selector", "value"),
     Input("category-overrides-store", "data"),
     Input("procedure-dropdown", "value"),
-    State("responsibility-table", "data"),
+    State("workflow-data-store", "data"),
     State("team-config-store", "data"),
 )
 def apply_highlighting_callback(base_fig_dict, arrow_info, highlight_track,
-                                 category_overrides, procedure, data, config):
+                                 category_overrides, procedure, workflow_snapshot, config):
     """Apply highlighting to the cached base figure. Fast: only updates colors/widths."""
+    data = (workflow_snapshot or {}).get("data")
     if not base_fig_dict or not data or not config:
         return go.Figure()
 
