@@ -22,7 +22,6 @@ _FLIGHT_DECK_EXAMPLE_CANDIDATES = [_HERE / "V8" / "IA_V8.csv", _HERE / "IA_V8.cs
 FLIGHT_DECK_EXAMPLE_CSV = next(
     (p for p in _FLIGHT_DECK_EXAMPLE_CANDIDATES if p.exists()), None
 )
-EXOPLANET_EXAMPLE_CSV = _HERE / "hat_exoplanet_analysis.csv"
 
 app = dash.Dash(__name__, suppress_callback_exceptions=True, external_stylesheets=["assets/styles.css"])
 server = app.server
@@ -1724,31 +1723,17 @@ app.layout = html.Div([
                 multiple=False,
             ),
             html.Div([
-                html.Div([
-                    html.Button(
-                        "Load Flight Deck Example",
-                        id="load-example-button",
-                        n_clicks=0,
-                        style={"fontSize": "13px"},
-                    ),
-                    html.P(
-                        "An IA for flight-deck autonomy involving a single pilot and an autonomous teammate.",
-                        style={"fontSize": "12px", "color": INK_MUTED, "margin": "6px 0 0"},
-                    ),
-                ], style={"flex": "1", "minWidth": "260px"}),
-                html.Div([
-                    html.Button(
-                        "Load Exoplanet Explorer Example",
-                        id="load-exoplanet-example-button",
-                        n_clicks=0,
-                        style={"fontSize": "13px"},
-                    ),
-                    html.P(
-                        "An exoplanet exploration game with one player supervising rovers and drones.",
-                        style={"fontSize": "12px", "color": INK_MUTED, "margin": "6px 0 0"},
-                    ),
-                ], style={"flex": "1", "minWidth": "260px"}),
-            ], style={"display": "flex", "flexWrap": "wrap", "gap": "16px", "marginTop": "12px"}),
+                html.Button(
+                    "Load Flight Deck Example",
+                    id="load-example-button",
+                    n_clicks=0,
+                    style={"fontSize": "13px"},
+                ),
+                html.P(
+                    "An IA for flight-deck autonomy involving a single pilot and an autonomous teammate.",
+                    style={"fontSize": "12px", "color": INK_MUTED, "margin": "6px 0 0"},
+                ),
+            ], style={"marginTop": "12px"}),
             html.Div(id="upload-status", style={"marginTop": "10px", "fontStyle": "italic"}),
 
             # ── Hierarchy configuration panel (shown after CSV upload) ──
@@ -2193,7 +2178,6 @@ def toggle_nav_links(config):
     Input("create-team-button", "n_clicks"),
     Input("reset-config-button", "n_clicks"),
     Input("load-example-button", "n_clicks"),
-    Input("load-exoplanet-example-button", "n_clicks"),
     Input("confirm-hierarchy-button", "n_clicks"),
     State("setup-upload", "filename"),
     State("manual-columns-input", "value"),
@@ -2208,7 +2192,7 @@ def toggle_nav_links(config):
     prevent_initial_call=True,
 )
 def handle_setup(upload_contents, create_clicks, reset_clicks, flight_example_clicks,
-                 exoplanet_example_clicks, confirm_clicks,
+                 confirm_clicks,
                  upload_filename, manual_columns, manual_task_col,
                  manual_procedure_col, manual_capacity_col, manual_category_col,
                  pending_csv, hier_l1, hier_l2, hier_l3):
@@ -2225,10 +2209,9 @@ def handle_setup(upload_contents, create_clicks, reset_clicks, flight_example_cl
     if triggered == "reset-config-button":
         return (None, None, HIDE, SHOW, HIDE, None, [], "") + _hide_hier()
 
-    if triggered in ("load-example-button", "load-exoplanet-example-button"):
-        is_exoplanet = triggered == "load-exoplanet-example-button"
-        example_path = EXOPLANET_EXAMPLE_CSV if is_exoplanet else FLIGHT_DECK_EXAMPLE_CSV
-        example_name = "Exoplanet Explorer" if is_exoplanet else "Flight Deck"
+    if triggered == "load-example-button":
+        example_path = FLIGHT_DECK_EXAMPLE_CSV
+        example_name = "Flight Deck"
         if example_path is None or not example_path.exists():
             return (no, no, no, no, no, no, no, "⚠️ Example file not found.") + _hide_hier()
         try:

@@ -36,3 +36,6 @@ Thumbs.db
 # Local test files
 test_*.py
 *_test.py
+
+# Instructor correction tables
+table_hat_exoplanet_analysis_full.csv
