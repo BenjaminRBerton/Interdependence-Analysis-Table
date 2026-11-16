@@ -40,3 +40,6 @@ test_*.py
 old_stuff/
 
 hf_deployment/
+
+# Instructor correction tables
+table_hat_exoplanet_analysis_full.csv
