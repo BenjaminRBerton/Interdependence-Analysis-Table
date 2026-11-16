@@ -39,3 +39,4 @@ test_*.py
 
 # Instructor correction tables
 table_hat_exoplanet_analysis_full.csv
+exoplanet_analysis_tables/
