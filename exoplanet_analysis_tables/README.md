@@ -4,7 +4,8 @@
   worksheet. Many analysis cells are intentionally blank for students to fill.
 - `table_hat_game_reconstructed_complete.csv` preserves the worksheet's 48
   tasks, row identifiers, procedure names, and ordering while taking columns
-  4-12 from the matching tasks in `../hat_exoplanet_analysis.csv`.
+  4-12 from the matching tasks in the complete instructor source used at the
+  time. That source is intentionally not distributed with the application.
 
 Tasks were matched by their unique `Task` value. This also preserves the old
 `Manage battery` procedure labels for "Stop executing steps of the path" and
